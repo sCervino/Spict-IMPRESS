@@ -1,0 +1,219 @@
+---
+title: "Stochastic surplus production model in continuous time (SPiCT)"
+author: "Hake"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    number_sections: yes
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(spict)
+#library(icesAdvice)
+```
+
+# Introduction 
+We aim to explore alternative Southern hake (8c9a) SPiCT configurations to existing data and compare the results with the GADGET ones.
+
+# Data
+Existing data and corresponding time series are as follow:
+
+- Catch data by quarter from 1982 to 2019.
+- Spanish Autum demersal survey from 1983 to 2019 (but 1987).
+- Portugese Autum demersal survey from 1987 to 2018 (but 2012)
+- Portugese standarized trawl LPUE from 1989 to 2019.
+- Spanish A Coruña trawl LPUE from 1985 to 2012
+
+
+```{r}
+## load data and plot
+## --------------------------
+#data <- read.csv("datosCat-Indices.csv")
+catDat <- read.csv("SHke_Catch_Quarter.csv")
+indDat <- read.csv("SHke_Indices.csv")
+effDat <- read.csv("Shke_CPUE.csv")
+
+C_hake <- data.frame(obsC = catDat$cat, timeC = catDat$time)
+I_SpGFS <- data.frame(obsI = c(indDat$SpGFS), timeI = indDat$year + 0.83)
+I_PtGFS <- data.frame(obsI = c(indDat$PtGFS), timeI = indDat$year + 0.83)
+I_PtEff <- data.frame(obsE = c(effDat$PtEffort), timeE = effDat$year)
+I_SpEff <- data.frame(obsE = c(effDat$SpEffort), timeE = effDat$year)
+
+inp <- list(timeC = C_hake$timeC, obsC = C_hake$obsC,
+            timeI = list(I_SpGFS$timeI, I_PtGFS$timeI),
+            obsI = list(I_SpGFS$obsI, I_PtGFS$obsI),
+            timeE = I_SpEff$timeE,
+##              obsE = I_PtEff$obsE)
+        obsE = I_SpEff$obsE + I_PtEff$obsE)
+
+## plot data
+## --------------------------
+plotspict.data(inp)
+plotspict.ci(inp) # CHECK THIS ERROR
+
+```
+
+The model improves with effort, to estimate F, instead of LPUE to estinmate B. A single effort series was made as the mean of the two existing effort series (Pt and Sp). Since Sp series finishes in 2012 NAs were set afterwards.
+
+Fisrt trial with time-variant ptoductivity have not converged. Hake is an opportunistic species able. There is a spawning peak in Feb-Apr although it spawns all the year. Furthermore there were a lot of changes in management measures after 2010 that, looking at the catch-by-quarter plot, have altered the seasonal catch distribution. All together plus the noisy data can make difficult to find a good fit for time variant productivity. 
+
+Question: Does it helps having a catch by quarter without time varying growth?
+
+```{r}
+## Model settings
+
+## time-variant productivity
+inp$timevaryinggrowth <- FALSE  ## not converging with TVP
+
+## seasonal fishing
+inp$seasontype <- 1  ## 1 or 3
+inp$nseasons <- 4
+
+## improve optimisation settings
+inp$optimiser.control <- list("iter.max" = 1e3,
+                              "eval.max" = 1e3)
+
+## priors
+inp$stabilise <- 1
+inp$priors$logn <- c(0,0,0)
+inp$priors$logalpha <- c(0,0,0)
+inp$priors$logbeta <- c(0,0,0)
+
+```
+
+
+
+Exploratory runs show that 0.5 could be a good prior for "Initial depletion level" assumed to be close to half carrying capacity 
+```{r}
+# inp$priors$logbkfrac <- c(log(0.5),0.5,1)
+```
+
+The model is fitted to data by running
+```{r}
+inp <- check.inp(inp)
+fit <- fit.spict(inp)
+fit <- calc.osa.resid(fit)
+```
+
+The results are summarised using
+```{r}
+capture.output(summary(fit))
+```
+
+The model is fitted to data by running
+```{r}
+plot(fit)
+```
+
+
+
+## diagnostics
+## --------------------------
+```{r}
+plotspict.diagnostic(fit)
+## dev.print(pdf, "SHke_spict_diagnostics.pdf", width=12, height=10)
+
+```
+
+Some minor problems with autocorrelations in catch and Spanish survey residuals
+
+
+# Checklist for the acceptance of a SPiCT assessment 
+- 1: Convergence of the model fit, which has code 0 if the fit was succesful. If this is not the case convergence was not obtained and reported results should not be used.
+
+```{r}
+fit$opt$convergence # Output code = 0
+all(is.finite(fit$sd))  # Output code = TRUE
+calc.bmsyk(fit)   # Inside 0.1 and 0.9. The shape of the production curve should not be too skewed. 
+```
+- 2: All variance parameters of the model parameters are finite should be TRUE
+
+```{r}
+all(is.finite(fit$sd))  
+```
+- 3: No violation of model assumptions based on one-step-ahead residuals (bias, auto-correlation, normality).This means, that p-values are insignificant (0.05), indicated by green titles in the graphs of spictplot.diagnostics(fit). Slight violations of these assumptions do not necessarily invalidate model results.
+```{r}
+res <- calc.osa.resid(res)  # 
+plotspict.diagnostic(res)
+```
+
+The first column of the plot contains information related to catch data and the second column contains information related to the biomass index data. The rows contain:
+
+- Log of the input data series.
+- OSA residuals with the p-value of a test for bias (i.e. that the mean of the residuals is different from zero) in the plot header. If the header is green the test was not significant, otherwise the header wouldbe red.
+- Empirical autocorrelation of the residuals. Two tests for significant autocorrelation is performed.
+Ljung-Box simultaneous test of multiple lags (here 4) with p-value shown in the header, and tests for
+individual lags shown by dashed horizontal lines in the plot. Here no violation is identified.
+- Tests for normality of the residuals both as a QQ-plot and with a Shapiro test with p-value shown invthe plot header.
+
+
+- 4: Consistent patterns in the retrospective analysis. This means that there is no tendency of consistent under- or overestimation of the relative fishing mortality F and relative biomass B in successive assessment. The retrospective trajectories of those two quantities should be inside 
+the confidence intervals of the base run. (fit <- fit.retro(fit))
+
+```{r}
+ret=retro(fit, nretroyear=6)
+plotspict.retro(ret)
+```
+
+- 5. Realistic production curve. The shape of the production curve should not be too skewed. 
+BMSY/K should be between 0.1 and 0.9 Low values of BMSY/K allow for an infinite population growth rate K.  calc.bmsyk(res)
+
+- 6. It is prudent to check that the same parameter estimates are obtained if using different initial values. If the optimum of the objective function is poorly defined, i.e. possibly containing multiple optima, it is possible that different parameter estimates will be returned depending on the initial values. To check whether this is the case run
+
+```{r}
+check.ini(inp, ntrials=20)
+```
+
+The argument **ntrials** set the number of different initial values to test for. For real data cases 30 trials shoudl be usee at minimum. The **propchng** contains the proportional change of the new randomly generated initial value relative to the base initial value, **inimat** contains the new randomly generated initial values, and **resmat** contains the resulting parameter estimates and a distance from the estimated parameter vector to the base parameter vector. The distance should preferably be close to zero. If that is not the case further investigation is required, i.e. inspection of objective function values, differences in results and residual diagnostics etc. should be performed. The example shown here looks fine in that all converged runs return the same parameter estimates. 
+
+- 7. High assessment uncertainty can indicate a lack of contrast in the input data or violation of
+the ecological model assumptions. The main variance parameters (logsdb, logsdc, logsdi, logsdf)
+should not be unrealistically high. Confidence intervals for B and F should not span more
+than 1 order of magnitude (calc.om(res)).
+
+
+# Extract values
+Once the model is selected values can be extracted with tables as
+
+```{r, include=FALSE}
+xtab<-function(x,caption='Table X.', file=stdout(), width='"100%"', cornername='', dec=rep(1,ncol(x))){
+  nc<-ncol(x)
+  lin<-paste('<table width=',width,'>', sep='')
+  lin<-c(lin,sub('$','</td></tr>',sub('\\. |\\.$','.</b> ',
+                                      sub('^', paste('<tr><td colspan=',nc+1,'><b>',sep=''), caption))))
+  hr<-paste('<tr><td colspan=',nc+1,'><hr noshade></td></tr>', sep='')
+  lin<-c(lin,hr)
+  cnames<-colnames(x)
+  cnames<-paste(sub('$','</b></td>',sub('^','<td align=right><b>',cnames)), collapse='\t')
+  lin<-c(lin,paste('<tr>',paste('<td align=left><b>',cornername,'</b></td>',sep=''),cnames,'</tr>'))
+  lin<-c(lin,hr)
+  rnames<-sub('$','</b></td>',sub('^','<tr> <td align=left><b>',rownames(x)))
+  #x<-sapply(1:ncol(x),function(i)sub('NA','  ',format(round(x[,i],dec[i]))))
+  x<-sapply(1:ncol(x),function(i)sub('NA','  ',formatC(round(x[,i],dec[i]),digits=dec[i], format='f')))
+  for(i in 1:nrow(x)){
+    thisline<-paste(rnames[i],paste(sub('$','</td>',sub('^','<td align=right>',x[i,])), collapse='\t'),'</tr>', sep='')
+    lin<-c(lin,thisline)
+  }
+  lin<-c(lin,hr)
+  lin<-c(lin,'</table><br>\n')
+  writeLines(lin,con=file)
+}
+
+```
+```{r}
+tab1 <- sumspict.parest(fit);tab1
+tab2 <- sumspict.srefpoints(fit);tab2
+tab3 <- sumspict.states(fit);tab3
+tab4 <- sumspict.predictions(fit);tab4
+```
+See also script fot others possible tables.
